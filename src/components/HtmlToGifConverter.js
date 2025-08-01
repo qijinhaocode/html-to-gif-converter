@@ -283,8 +283,6 @@ const HtmlToGifConverter = () => {
                         <div className="text-sm text-blue-800">
                             <p className="font-semibold mb-1">使用说明：</p>
                             <ul className="list-disc list-inside">
-                                <li>此工具现在可以生成真正的 GIF 文件</li>
-                                <li>使用模拟动画演示效果（实际项目需要 html2canvas）</li>
                                 <li>GIF 生成可能需要几秒钟，请耐心等待</li>
                             </ul>
                         </div>
