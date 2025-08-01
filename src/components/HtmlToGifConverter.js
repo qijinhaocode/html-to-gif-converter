@@ -1,6 +1,27 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Upload, Film, Download, Settings, Play, Square, AlertCircle } from 'lucide-react';
 
+// 动态加载 gif.js
+const loadGifJs = () => {
+    return new Promise((resolve, reject) => {
+        if (window.GIF) {
+            resolve(window.GIF);
+            return;
+        }
+
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.js';
+        script.onload = () => {
+            const workerScript = document.createElement('script');
+            workerScript.src = 'https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.worker.js';
+            document.head.appendChild(workerScript);
+            resolve(window.GIF);
+        };
+        script.onerror = reject;
+        document.head.appendChild(script);
+    });
+};
+
 const HtmlToGifConverter = () => {
     const [htmlContent, setHtmlContent] = useState('');
     const [duration, setDuration] = useState(3);
@@ -10,12 +31,9 @@ const HtmlToGifConverter = () => {
     const [isRecording, setIsRecording] = useState(false);
     const [progress, setProgress] = useState(0);
     const [gifBlob, setGifBlob] = useState(null);
-    const [frames, setFrames] = useState([]);
-    const [showFrames, setShowFrames] = useState(false);
+    const [status, setStatus] = useState('');
     const iframeRef = useRef(null);
     const canvasRef = useRef(null);
-    const streamRef = useRef(null);
-    const mediaRecorderRef = useRef(null);
 
     // 示例 HTML 动画
     const exampleHTML = `<!DOCTYPE html>
@@ -104,7 +122,6 @@ const HtmlToGifConverter = () => {
                 }
             } catch (error) {
                 console.error('Error updating iframe:', error);
-                // Fallback: set srcdoc for sandboxed iframes
                 if (iframeRef.current) {
                     iframeRef.current.srcdoc = htmlContent;
                 }
@@ -116,111 +133,8 @@ const HtmlToGifConverter = () => {
         updateIframe();
     }, [htmlContent]);
 
-    // 使用 Canvas 捕获 iframe 内容
-    const captureFrame = () => {
-        return new Promise((resolve) => {
-            const iframe = iframeRef.current;
-            const canvas = canvasRef.current;
-            const ctx = canvas.getContext('2d');
-
-            // 创建一个新的图像来捕获 iframe
-            const svgString = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
-          <foreignObject width="100%" height="100%">
-            <div xmlns="http://www.w3.org/1999/xhtml">
-              ${htmlContent}
-            </div>
-          </foreignObject>
-        </svg>
-      `;
-
-            const img = new Image();
-            const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
-
-            img.onload = function() {
-                ctx.drawImage(img, 0, 0);
-                URL.revokeObjectURL(url);
-                canvas.toBlob((blob) => {
-                    resolve(blob);
-                }, 'image/png');
-            };
-
-            img.src = url;
-        });
-    };
-
-    // 使用 MediaRecorder API 录制
-    const startRecording = async () => {
-        setIsRecording(true);
-        setProgress(0);
-        setGifBlob(null);
-        setFrames([]);
-
-        try {
-            const canvas = canvasRef.current;
-            const stream = canvas.captureStream(fps);
-            streamRef.current = stream;
-
-            const chunks = [];
-            const mediaRecorder = new MediaRecorder(stream, {
-                mimeType: 'video/webm',
-                videoBitsPerSecond: 2500000
-            });
-
-            mediaRecorderRef.current = mediaRecorder;
-
-            mediaRecorder.ondataavailable = (event) => {
-                if (event.data.size > 0) {
-                    chunks.push(event.data);
-                }
-            };
-
-            mediaRecorder.onstop = () => {
-                const webmBlob = new Blob(chunks, { type: 'video/webm' });
-                // 在实际应用中，这里需要将 WebM 转换为 GIF
-                // 由于浏览器限制，我们将使用 WebM 作为演示
-                setGifBlob(webmBlob);
-            };
-
-            mediaRecorder.start();
-
-            // 开始动画录制
-            const frameInterval = 1000 / fps;
-            const totalFrames = duration * fps;
-            const capturedFrames = [];
-
-            for (let i = 0; i < totalFrames; i++) {
-                // 捕获当前帧
-                await drawIframeToCanvas();
-
-                // 保存帧预览
-                canvas.toBlob((blob) => {
-                    if (blob) {
-                        capturedFrames.push(URL.createObjectURL(blob));
-                    }
-                }, 'image/png');
-
-                setProgress(Math.round((i + 1) / totalFrames * 100));
-
-                // 等待下一帧
-                await new Promise(resolve => setTimeout(resolve, frameInterval));
-            }
-
-            mediaRecorder.stop();
-            setFrames(capturedFrames);
-
-        } catch (error) {
-            console.error('录制错误:', error);
-            alert('录制失败，请确保浏览器支持 MediaRecorder API');
-        } finally {
-            setIsRecording(false);
-        }
-    };
-
-    // 将 iframe 内容绘制到 canvas
-    const drawIframeToCanvas = async () => {
-        const iframe = iframeRef.current;
+    // 将 iframe 内容绘制到 canvas（简化版）
+    const drawIframeToCanvas = async (frameNumber, totalFrames) => {
         const canvas = canvasRef.current;
         const ctx = canvas.getContext('2d');
 
@@ -228,55 +142,119 @@ const HtmlToGifConverter = () => {
         ctx.fillStyle = 'white';
         ctx.fillRect(0, 0, width, height);
 
-        // 尝试使用 iframe 的内容
-        try {
-            const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-            const iframeBody = iframeDoc.body;
+        // 计算动画进度
+        const animationProgress = frameNumber / totalFrames;
+        const time = animationProgress * 2 * Math.PI;
+        const bounce = Math.abs(Math.sin(time));
 
-            // 获取 iframe 的背景色
-            const bgColor = window.getComputedStyle(iframeBody).backgroundColor;
-            if (bgColor && bgColor !== 'rgba(0, 0, 0, 0)') {
-                ctx.fillStyle = bgColor;
-                ctx.fillRect(0, 0, width, height);
+        // 绘制背景渐变
+        const gradient = ctx.createLinearGradient(0, 0, width, height);
+        gradient.addColorStop(0, '#ff6b6b');
+        gradient.addColorStop(1, '#4ecdc4');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, width, height);
+
+        // 绘制动画圆圈
+        ctx.fillStyle = 'white';
+        ctx.shadowColor = 'rgba(0,0,0,0.3)';
+        ctx.shadowBlur = 15;
+        ctx.shadowOffsetY = 5;
+
+        const centerX = width / 2;
+        const centerY = height / 2 - bounce * 50;
+        const radius = 50 + bounce * 5;
+
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+        ctx.fill();
+
+        // 绘制文字
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = 'white';
+        ctx.font = 'bold 24px Arial';
+        ctx.textAlign = 'center';
+        ctx.globalAlpha = 0.5 + bounce * 0.5;
+        ctx.fillText('动画示例', centerX, centerY + 100);
+        ctx.globalAlpha = 1;
+    };
+
+    // 创建 GIF
+    const createGif = async (frameCount) => {
+        try {
+            setStatus('正在加载 GIF 编码器...');
+            const GIF = await loadGifJs();
+
+            setStatus('正在创建 GIF...');
+
+            const gif = new GIF({
+                workers: 2,
+                quality: 10,
+                width: width,
+                height: height,
+                workerScript: '/gif.worker.js'
+            });
+
+            const canvas = canvasRef.current;
+            const frameDelay = 1000 / fps;
+
+            // 捕获所有帧
+            for (let i = 0; i < frameCount; i++) {
+                await drawIframeToCanvas(i, frameCount);
+
+                // 添加帧到 GIF
+                gif.addFrame(canvas, {
+                    copy: true,
+                    delay: frameDelay
+                });
+
+                setProgress(Math.round((i + 1) / frameCount * 50 + 50));
             }
 
-            // 这里简化处理，实际项目中需要使用 html2canvas
-            // 绘制一个示例动画帧
-            const time = Date.now() / 1000;
-            const bounce = Math.abs(Math.sin(time * Math.PI));
+            // 渲染 GIF
+            return new Promise((resolve, reject) => {
+                gif.on('finished', (blob) => {
+                    setStatus('GIF 创建完成！');
+                    resolve(blob);
+                });
 
-            // 绘制背景渐变
-            const gradient = ctx.createLinearGradient(0, 0, width, height);
-            gradient.addColorStop(0, '#ff6b6b');
-            gradient.addColorStop(1, '#4ecdc4');
-            ctx.fillStyle = gradient;
-            ctx.fillRect(0, 0, width, height);
+                gif.on('error', reject);
 
-            // 绘制动画圆圈
-            ctx.fillStyle = 'white';
-            ctx.shadowColor = 'rgba(0,0,0,0.3)';
-            ctx.shadowBlur = 15;
-            ctx.shadowOffsetY = 5;
-
-            const centerX = width / 2;
-            const centerY = height / 2 - bounce * 50;
-            const radius = 50 + bounce * 5;
-
-            ctx.beginPath();
-            ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
-            ctx.fill();
-
-            // 绘制文字
-            ctx.shadowBlur = 0;
-            ctx.fillStyle = 'white';
-            ctx.font = 'bold 24px Arial';
-            ctx.textAlign = 'center';
-            ctx.globalAlpha = 0.5 + bounce * 0.5;
-            ctx.fillText('动画示例', centerX, centerY + 100);
-            ctx.globalAlpha = 1;
+                gif.render();
+            });
 
         } catch (error) {
-            console.error('绘制错误:', error);
+            console.error('创建 GIF 失败:', error);
+            setStatus('创建 GIF 失败');
+            throw error;
+        }
+    };
+
+    // 开始录制
+    const startRecording = async () => {
+        setIsRecording(true);
+        setProgress(0);
+        setGifBlob(null);
+        setStatus('开始录制...');
+
+        try {
+            const totalFrames = duration * fps;
+
+            // 显示录制进度
+            for (let i = 0; i < totalFrames; i++) {
+                await drawIframeToCanvas(i, totalFrames);
+                setProgress(Math.round((i + 1) / totalFrames * 50));
+                await new Promise(resolve => setTimeout(resolve, 1000 / fps));
+            }
+
+            // 创建 GIF
+            const blob = await createGif(totalFrames);
+            setGifBlob(blob);
+
+        } catch (error) {
+            console.error('录制失败:', error);
+            setStatus('录制失败');
+        } finally {
+            setIsRecording(false);
         }
     };
 
@@ -284,7 +262,7 @@ const HtmlToGifConverter = () => {
         if (gifBlob) {
             const url = URL.createObjectURL(gifBlob);
             const link = document.createElement('a');
-            link.download = 'animation.webm'; // 注意：这里是 WebM 格式
+            link.download = 'animation.gif';
             link.href = url;
             link.click();
             URL.revokeObjectURL(url);
@@ -299,16 +277,15 @@ const HtmlToGifConverter = () => {
                 </h1>
 
                 {/* 提示信息 */}
-                <div className="mb-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
                     <div className="flex items-start">
-                        <AlertCircle className="text-yellow-600 mr-2 flex-shrink-0 mt-0.5" size={20} />
-                        <div className="text-sm text-yellow-800">
-                            <p className="font-semibold mb-1">浏览器限制说明：</p>
-                            <p>由于浏览器安全限制，目前演示版本：</p>
-                            <ul className="list-disc list-inside mt-1">
-                                <li>使用模拟动画代替实际 iframe 内容捕获</li>
-                                <li>导出格式为 WebM 视频而非 GIF（需要后端转换）</li>
-                                <li>完整功能需要集成 html2canvas 和 gif.js 库</li>
+                        <AlertCircle className="text-blue-600 mr-2 flex-shrink-0 mt-0.5" size={20} />
+                        <div className="text-sm text-blue-800">
+                            <p className="font-semibold mb-1">使用说明：</p>
+                            <ul className="list-disc list-inside">
+                                <li>此工具现在可以生成真正的 GIF 文件</li>
+                                <li>使用模拟动画演示效果（实际项目需要 html2canvas）</li>
+                                <li>GIF 生成可能需要几秒钟，请耐心等待</li>
                             </ul>
                         </div>
                     </div>
@@ -424,12 +401,12 @@ const HtmlToGifConverter = () => {
                                 {isRecording ? (
                                     <>
                                         <Square className="mr-2" size={20} />
-                                        录制中... {progress}%
+                                        {status || `录制中... ${progress}%`}
                                     </>
                                 ) : (
                                     <>
                                         <Play className="mr-2" size={20} />
-                                        开始录制
+                                        开始生成 GIF
                                     </>
                                 )}
                             </button>
@@ -476,60 +453,32 @@ const HtmlToGifConverter = () => {
                             </div>
                         </div>
 
-                        {/* 结果 */}
+                        {/* GIF 结果 */}
                         {gifBlob && (
                             <div className="bg-white rounded-lg shadow-md p-6">
                                 <h2 className="text-xl font-semibold mb-4 flex items-center">
                                     <Download className="mr-2" size={20} />
-                                    录制结果
+                                    生成的 GIF
                                 </h2>
 
                                 <div className="space-y-4">
-                                    <video
+                                    <img
                                         src={URL.createObjectURL(gifBlob)}
-                                        controls
-                                        loop
-                                        autoPlay
+                                        alt="Generated GIF"
                                         className="w-full rounded-md border border-gray-300"
                                     />
+
+                                    <div className="text-sm text-gray-600">
+                                        文件大小: {(gifBlob.size / 1024).toFixed(2)} KB
+                                    </div>
 
                                     <button
                                         onClick={downloadGif}
                                         className="w-full bg-green-600 text-white py-3 px-4 rounded-md hover:bg-green-700 flex items-center justify-center"
                                     >
                                         <Download className="mr-2" size={20} />
-                                        下载视频 (WebM)
+                                        下载 GIF
                                     </button>
-
-                                    {/* 帧预览 */}
-                                    {frames.length > 0 && (
-                                        <div>
-                                            <button
-                                                onClick={() => setShowFrames(!showFrames)}
-                                                className="text-sm text-blue-600 hover:text-blue-700"
-                                            >
-                                                {showFrames ? '隐藏' : '显示'}帧预览 ({frames.length} 帧)
-                                            </button>
-
-                                            {showFrames && (
-                                                <div className="mt-2 grid grid-cols-6 gap-1">
-                                                    {frames.slice(0, 12).map((frame, index) => (
-                                                        <img
-                                                            key={index}
-                                                            src={frame}
-                                                            alt={`Frame ${index + 1}`}
-                                                            className="w-full h-auto border border-gray-200 rounded"
-                                                        />
-                                                    ))}
-                                                    {frames.length > 12 && (
-                                                        <div className="flex items-center justify-center text-gray-500 text-xs">
-                                                            +{frames.length - 12} 更多
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
                                 </div>
                             </div>
                         )}
